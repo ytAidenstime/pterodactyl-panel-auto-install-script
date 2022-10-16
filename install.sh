@@ -1,12 +1,30 @@
+
 #!/bin/bash
+
+set -e
 
 echo 'Welcome proxyghost staff this is the pterodactyl panel install script! if you have any qustions or need help getting it on the clients system just dm ytAidenstime :)'
 
-RELEASE=$1
-DATE=$(date +%F)
+SCRIPT_VERSION="v0.11.0"
+GITHUB_BASE_URL="https://raw.githubusercontent.com/vilhelmprytz/pterodactyl-installer"
+
+LOG_PATH="/var/log/pterodactyl-installer.log"
+
+# exit with error status code if user is not root
+if [[ $EUID -ne 0 ]]; then
+  echo "* This script must be executed with root privileges (sudo)." 1>&2
+  exit 1
+fi
+
+# check for curl
+if ! [ -x "$(command -v curl)" ]; then
+  echo "* curl is required in order for this script to work."
+  echo "* install using apt (Debian and derivatives) or yum/dnf (CentOS)"
+  exit 1
+fi
 
 output() {
-  echo "- $1"
+  echo -e "* ${1}"
 }
 
 error() {
@@ -18,39 +36,66 @@ error() {
   echo ""
 }
 
-[ -z "$RELEASE" ] && error "Mising release variable" && exit 1
+execute() {
+  echo -e "\n\n* pterodactyl-installer $(date) \n\n" >>$LOG_PATH
 
-output "Releasing $RELEASE on $DATE"
+  bash <(curl -s "$1") | tee -a $LOG_PATH
+  [[ -n $2 ]] && execute "$2"
+}
 
-sed -i "/next-release/c\## $RELEASE (released on $DATE)" CHANGELOG.md
+done=false
 
-# install-panel.sh
-sed -i "s/.*GITHUB_SOURCE=.*/GITHUB_SOURCE=\"$RELEASE\"/" install-panel.sh
-sed -i "s/.*SCRIPT_RELEASE=.*/SCRIPT_RELEASE=\"$RELEASE\"/" install-panel.sh
+output "Pterodactyl installation script @ $SCRIPT_VERSION"
+output
+output "Copyright (C) 2018 - 2022, Vilhelm Prytz, <vilhelm@prytznet.se>"
+output "https://github.com/vilhelmprytz/pterodactyl-installer"
+output
+output "Sponsoring/Donations: https://github.com/vilhelmprytz/pterodactyl-installer?sponsor=1"
+output "This script is not associated with the official Pterodactyl Project."
 
-# install-wings.sh
-sed -i "s/.*GITHUB_SOURCE=.*/GITHUB_SOURCE=\"$RELEASE\"/" install-wings.sh
-sed -i "s/.*SCRIPT_RELEASE=.*/SCRIPT_RELEASE=\"$RELEASE\"/" install-wings.sh
+output
 
-# install.sh
-sed -i "s/.*SCRIPT_VERSION=.*/SCRIPT_VERSION=\"$RELEASE\"/" install.sh
+PANEL_LATEST="$GITHUB_BASE_URL/$SCRIPT_VERSION/install-panel.sh"
 
-output "Commit release"
+WINGS_LATEST="$GITHUB_BASE_URL/$SCRIPT_VERSION/install-wings.sh"
 
-git add .
-git commit -S -m "Release $RELEASE"
-git push
+PANEL_CANARY="$GITHUB_BASE_URL/master/install-panel.sh"
 
-output "Release $RELEASE pushed"
+WINGS_CANARY="$GITHUB_BASE_URL/master/install-wings.sh"
 
-output "Create a new release, with changelog below - https://github.com/vilhelmprytz/pterodactyl-installer/releases/new"
-output ""
+while [ "$done" == false ]; do
+  options=(
+    "Install the panel"
+    "Install Wings"
+    "Install both [0] and [1] on the same machine (wings script runs after panel)\n"
 
-changelog=$(scripts/changelog_parse.py)
+    "Install panel with canary version of the script (the versions that lives in master, may be broken!)"
+    "Install Wings with canary version of the script (the versions that lives in master, may be broken!)"
+    "Install both [3] and [4] on the same machine (wings script runs after panel)"
+  )
 
-cat <<EOF
-# $RELEASE
-Put a message here describing the release.
-## Changelog
-$changelog
-EOF
+  actions=(
+    "$PANEL_LATEST"
+    "$WINGS_LATEST"
+    "$PANEL_LATEST;$WINGS_LATEST"
+
+    "$PANEL_CANARY"
+    "$WINGS_CANARY"
+    "$PANEL_CANARY;$WINGS_CANARY"
+  )
+
+  output "What would you like to do?"
+
+  for i in "${!options[@]}"; do
+    output "[$i] ${options[$i]}"
+  done
+
+  echo -n "* Input 0-$((${#actions[@]} - 1)): "
+  read -r action
+
+  [ -z "$action" ] && error "Input is required" && continue
+
+  valid_input=("$(for ((i = 0; i <= ${#actions[@]} - 1; i += 1)); do echo "${i}"; done)")
+  [[ ! " ${valid_input[*]} " =~ ${action} ]] && error "Invalid option"
+  [[ " ${valid_input[*]} " =~ ${action} ]] && done=true && IFS=";" read -r i1 i2 <<<"${actions[$action]}" && execute "$i1" "$i2"
+done
